@@ -42,6 +42,7 @@ from .tools.memory import (
 from .tools.flash import (
     erase_flash as _erase_flash,
     program_flash as _program_flash,
+    program_file as _program_file,
     verify_flash as _verify_flash,
 )
 from .tools.debug import (
@@ -52,6 +53,7 @@ from .tools.debug import (
     get_cpu_state as _get_cpu_state,
     set_breakpoint as _set_breakpoint,
     clear_breakpoint as _clear_breakpoint,
+    clear_all_breakpoints as _clear_all_breakpoints,
 )
 from .tools.rtt import (
     rtt_start as _rtt_start,
@@ -343,6 +345,24 @@ async def verify_flash(address: int, data: bytes) -> dict:
     return _verify_flash(address, data)
 
 
+@mcp.tool()
+async def program_file(path: str, address: int = 0x08000000) -> dict:
+    """Program firmware file to Flash / 将固件文件烧录到 Flash.
+
+    Reads a binary/hex file from the local filesystem and programs it to Flash.
+    This is more convenient than program_flash for large firmware images.
+    从本地文件系统读取固件文件并烧录到Flash。比 program_flash 更适合大固件。
+
+    Args:
+        path: Path to firmware file (.bin or .hex) / 固件文件路径
+        address: Start address in Flash (default 0x08000000) / Flash起始地址
+
+    Returns:
+        Programming result / 烧录结果
+    """
+    return _program_file(path, address)
+
+
 # ========================================
 # Debug Control Tools (7) / 调试控制工具 (7个)
 # ========================================
@@ -424,6 +444,16 @@ async def clear_breakpoint(address: int) -> dict:
         Clear result / 清除结果
     """
     return _clear_breakpoint(address)
+
+
+@mcp.tool()
+async def clear_all_breakpoints() -> dict:
+    """Clear all hardware breakpoints / 清除所有硬件断点.
+
+    Clears all tracked and FPB hardware breakpoints.
+    清除所有已跟踪和FPB硬件断点。
+    """
+    return _clear_all_breakpoints()
 
 
 # ========================================
