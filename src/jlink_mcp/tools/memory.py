@@ -8,6 +8,12 @@ from ..models.operations import MemoryReadRequest, MemoryWriteRequest, RegisterR
 from ..utils import logger, validate_address, format_bytes
 
 
+def _strip_reg_comment(name: str) -> str:
+    """Strip parenthetical suffix like ' (PC)' from register names for API lookup."""
+    idx = name.find(' (')
+    return name[:idx] if idx > 0 else name
+
+
 def read_memory(address: int, size: int, width: int = 32) -> Dict[str, Any]:
     """读取指定地址的内存.
 
@@ -32,10 +38,10 @@ def read_memory(address: int, size: int, width: int = 32) -> Dict[str, Any]:
         if width not in (8, 16, 32):
             raise JLinkMCPError(JLinkErrorCode.INVALID_PARAMETER, f"宽度必须是 8/16/32: {width}")
 
-        validate_address(address, width // 8)
+        validate_address(address, 1)  # ARM Cortex-M supports unaligned access; read at byte level
 
         jlink = jlink_manager.get_jlink()
-        
+
         # 添加：检查目标是否暂停（解决 -3 错误的主要原因）
         try:
             if hasattr(jlink, 'halted') and not jlink.halted():
@@ -45,7 +51,7 @@ def read_memory(address: int, size: int, width: int = 32) -> Dict[str, Any]:
             # 如果无法检查或暂停状态，继续尝试读取
             pass
         
-        data = jlink.memory_read(address, size)
+        data = jlink.memory_read(address, size, nbits=8)
 
         hex_dump = format_bytes(data)
         logger.info(f"读取内存 {address:#x} 大小 {size} 字节成功")
@@ -112,10 +118,10 @@ def write_memory(address: int, data: bytes, width: int = 32) -> Dict[str, Any]:
         if not data:
             raise JLinkMCPError(JLinkErrorCode.INVALID_PARAMETER, "数据不能为空")
 
-        validate_address(address, width // 8)
+        validate_address(address, 1)  # ARM Cortex-M supports unaligned access
 
         jlink = jlink_manager.get_jlink()
-        jlink.memory_write(address, data)
+        jlink.memory_write(address, data, nbits=8)
 
         logger.info(f"写入内存 {address:#x} 大小 {len(data)} 字节成功")
 
@@ -226,7 +232,7 @@ def write_register(register_name: str, value: int) -> Dict[str, Any]:
             raise JLinkMCPError(JLinkErrorCode.INVALID_PARAMETER, "寄存器名称不能为空")
 
         jlink = jlink_manager.get_jlink()
-        jlink.register_write(register_name, value)
+        jlink.register_write(_strip_reg_comment(register_name), value)
 
         logger.info(f"写入寄存器 {register_name} = {value:#x} 成功")
 

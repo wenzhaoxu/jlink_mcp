@@ -75,6 +75,24 @@ def connect_device(serial_number: str | None = None, interface: str | None = Non
         - message: 状态信息
     """
     try:
+        # Check if already connected - reuse existing connection
+        if jlink_manager.is_connected:
+            status = jlink_manager.get_connection_status()
+            status_data = _serialize_object(status, STATUS_FIELDS)
+            logger.info(f"设备已连接，复用现有连接: {status_data['device_serial']}")
+            return {
+                "success": True,
+                "serial_number": status_data["device_serial"],
+                "mode": status_data["connection_mode"],
+                "strategy": status_data["connection_strategy"],
+                "requested_chip_name": status_data["requested_chip_name"],
+                "connected_chip_name": status_data["connected_chip_name"],
+                "message": (
+                    f"设备已连接（复用现有连接）: {status_data['device_serial']}，"
+                    f"接口: {status_data['target_interface']}"
+                ),
+            }
+
         if interface is None:
             config = config_manager.get_config()
             interface = config.default_interface
@@ -104,6 +122,16 @@ def connect_device(serial_number: str | None = None, interface: str | None = Non
 
         error_msg = str(e)
         code = JLinkErrorCode.CONNECTION_FAILED
+
+        if "already connected" in error_msg.lower() or "already open" in error_msg.lower():
+            # Pylink already-connected error: try to reuse
+            if jlink_manager._jlink is not None:
+                logger.info("连接已存在，尝试复用")
+                return {
+                    "success": True,
+                    "serial_number": jlink_manager._device_serial,
+                    "message": "连接已存在，复用现有连接"
+                }
 
         if "unsupported device" in error_msg.lower() or "not found" in error_msg.lower():
             code = JLinkErrorCode.DEVICE_NOT_FOUND
@@ -144,6 +172,8 @@ def disconnect_device() -> Dict[str, Any]:
         - message: 状态信息
     """
     try:
+        from .rtt import rtt_reset_state
+        rtt_reset_state()
         jlink_manager.disconnect()
         logger.info("设备已断开连接")
         return {

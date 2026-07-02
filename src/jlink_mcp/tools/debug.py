@@ -2,12 +2,18 @@
 
 from typing import Dict, Any, List, Optional
 
-import pylink
-
 from ..jlink_manager import jlink_manager
 from ..exceptions import JLinkMCPError, JLinkErrorCode
 from ..models.operations import DebugBreakpoint, CPUState
 from ..utils import logger
+
+_breakpoint_handles: Dict[int, int] = {}  # address -> handle
+
+
+def _strip_reg_comment(name: str) -> str:
+    """Strip parenthetical suffix like ' (PC)' from register names for API lookup."""
+    idx = name.find(' (')
+    return name[:idx] if idx > 0 else name
 
 
 def reset_target(reset_type: str = "normal") -> Dict[str, Any]:
@@ -30,14 +36,13 @@ def reset_target(reset_type: str = "normal") -> Dict[str, Any]:
 
         if reset_type == "halt":
             logger.info("执行复位并暂停")
-            jlink.reset(pylink.JLinkFlags.RESET_DO_NOT_STOP_IF_HALTED)
-            jlink.reset(pylink.JLinkFlags.RESET_STOP)
+            jlink.reset(halt=True)
         elif reset_type == "core":
             logger.info("执行内核复位")
-            jlink.reset(pylink.JLinkFlags.RESET_CORE)
+            jlink.reset(halt=True)
         else:  # normal
             logger.info("执行普通复位")
-            jlink.reset()
+            jlink.reset(halt=False)
 
         return {
             "success": True,
@@ -233,6 +238,19 @@ def get_cpu_state() -> Dict[str, Any]:
             except Exception as e:
                 logger.warning(f"读取寄存器失败: {e}")
 
+        # Detect CPU in reset: PC=0 typically means CPU is held in reset or debug connection lost
+        if halted and (pc is None or pc == 0):
+            logger.warning("CPU 已暂停但 PC=0，可能处于复位状态或调试连接异常")
+            return {
+                "success": True,
+                "running": False,
+                "halted": True,
+                "pc": pc,
+                "lr": lr,
+                "sp": sp,
+                "message": "CPU 状态: 已暂停 (PC=0，可能处于复位状态，请执行 run_cpu 或检查硬件连接)"
+            }
+
         logger.info(f"CPU 状态: {'运行' if running else '暂停'}")
         return {
             "success": True,
@@ -295,13 +313,35 @@ def set_breakpoint(address: int) -> Dict[str, Any]:
             )
 
         # 设置断点
-        jlink.set_breakpoint(address)
+        handle = jlink.breakpoint_set(address)
+        _breakpoint_handles[address] = handle
 
-        logger.info(f"断点已设置: {address:#x}")
+        # Verify FPB is enabled (Cortex-M: check FP_CTRL @ 0xE0002000)
+        fpb_enabled = False
+        try:
+            fpb_ctrl_addr = 0xE0002000
+            fpb_ctrl = jlink.memory_read32(fpb_ctrl_addr, 1)[0]
+            fpb_enabled = bool(fpb_ctrl & 0x1)
+            if not fpb_enabled:
+                logger.warning(f"FPB 未使能 (FP_CTRL=0x{fpb_ctrl:08X})，断点可能不生效")
+                # Try to enable FPB
+                try:
+                    jlink.memory_write32(fpb_ctrl_addr, [0x3])  # ENABLE(bit0) + KEY(bit1)
+                    fpb_ctrl2 = jlink.memory_read32(fpb_ctrl_addr, 1)[0]
+                    fpb_enabled = bool(fpb_ctrl2 & 0x1)
+                    if fpb_enabled:
+                        logger.info("已手动使能 FPB 单元")
+                except Exception:
+                    pass
+        except Exception:
+            logger.debug("无法验证 FPB 状态（可能目标不支持）")
+
+        logger.info(f"断点已设置: {address:#x} (FPB使能={fpb_enabled})")
         return {
             "success": True,
             "address": address,
-            "message": f"断点已设置: {address:#x}"
+            "fpb_enabled": fpb_enabled,
+            "message": f"断点已设置: {address:#x}" + ("" if fpb_enabled else " (警告: FPB未使能，断点可能不生效)")
         }
     except JLinkMCPError as e:
         logger.error(f"设置断点失败: {e}")
@@ -339,7 +379,11 @@ def clear_breakpoint(address: int) -> Dict[str, Any]:
         jlink = jlink_manager.get_jlink()
 
         # 清除断点
-        jlink.clear_breakpoint(address)
+        handle = _breakpoint_handles.pop(address, None)
+        if handle is None:
+            handle = jlink.breakpoint_find(address)
+        if handle:
+            jlink.breakpoint_clear(handle)
 
         logger.info(f"断点已清除: {address:#x}")
         return {
@@ -363,5 +407,67 @@ def clear_breakpoint(address: int) -> Dict[str, Any]:
                 "code": JLinkErrorCode.UNKNOWN_ERROR.value[0],
                 "description": str(e),
                 "suggestion": "请检查地址是否正确"
+            }
+        }
+
+def clear_all_breakpoints() -> Dict[str, Any]:
+    """Clear all hardware breakpoints / 清除所有硬件断点.
+
+    Iterates through all known breakpoints and clears them one by one.
+    遍历所有已知断点并逐一清除。
+
+    Returns:
+        Clear result, with list of cleared addresses / 清除结果，包含已清除的地址列表
+    """
+    global _breakpoint_handles
+
+    try:
+        jlink = jlink_manager.get_jlink()
+        cleared = []
+        errors = []
+
+        # Clear by handle (our tracked breakpoints)
+        addresses = list(_breakpoint_handles.keys())
+        for addr in addresses:
+            try:
+                jlink.breakpoint_clear(_breakpoint_handles[addr])
+                cleared.append(addr)
+            except Exception as e:
+                errors.append({"address": addr, "error": str(e)})
+
+        # Also try to find and clear any FPB breakpoints not in our list
+        try:
+            if hasattr(jlink, 'fpb_num_breakpoints'):
+                for i in range(jlink.fpb_num_breakpoints()):
+                    bp = jlink.fpb_breakpoint(i)
+                    if bp is not None and bp.address not in addresses:
+                        try:
+                            jlink.fpb_breakpoint_clear(i)
+                            cleared.append(bp.address)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        _breakpoint_handles.clear()
+
+        logger.info(f"清除了 {len(cleared)} 个断点")
+        return {
+            "success": True,
+            "cleared_count": len(cleared),
+            "addresses": cleared,
+            "errors": errors if errors else None,
+            "message": f"成功清除 {len(cleared)} 个断点" + (f"，{len(errors)} 个错误" if errors else "")
+        }
+    except Exception as e:
+        logger.error(f"清除所有断点失败: {e}")
+        return {
+            "success": False,
+            "cleared_count": 0,
+            "addresses": [],
+            "error": {
+                "code": JLinkErrorCode.UNKNOWN_ERROR.value[0] if hasattr(JLinkErrorCode, 'UNKNOWN_ERROR') else -1,
+                "description": str(e),
+                "suggestion": "请检查目标是否已暂停"
             }
         }

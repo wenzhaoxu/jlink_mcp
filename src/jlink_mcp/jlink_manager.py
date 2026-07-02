@@ -235,11 +235,17 @@ class JLinkManager:
             return fallback
 
         try:
-            device_name = self._jlink.device_name()
-            if device_name:
-                return str(device_name)
+            device_name = None
+            if hasattr(self._jlink, '_device') and self._jlink._device:
+                raw = self._jlink._device.sName
+                if isinstance(raw, bytes):
+                    device_name = raw.decode('utf-8')
+                else:
+                    device_name = str(raw)
         except Exception:
             pass
+        if device_name:
+            return device_name
 
         return fallback
 
@@ -501,7 +507,12 @@ class JLinkManager:
 
             device_name = None
             try:
-                device_name = jlink.device_name()
+                if hasattr(jlink, '_device') and jlink._device:
+                    raw = jlink._device.sName
+                    if isinstance(raw, bytes):
+                        device_name = raw.decode('utf-8')
+                    else:
+                        device_name = str(raw)
             except Exception:
                 pass
 
@@ -515,7 +526,7 @@ class JLinkManager:
 
             device_id = None
             try:
-                device_id = jlink.device_id()
+                device_id = jlink.core_id()  # In 2.0.1, device_id() doesn't exist, use core_id()
             except Exception:
                 pass
 
@@ -524,8 +535,8 @@ class JLinkManager:
             ram_addresses = []
 
             try:
-                if hasattr(jlink, 'device'):
-                    device = jlink.device
+                if hasattr(jlink, '_device') and jlink._device:
+                    device = jlink._device
                     if device:
                         flash_size = device.FlashSize
                         ram_size = device.RAMSize

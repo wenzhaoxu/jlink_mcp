@@ -32,7 +32,7 @@ env/
 *.swp
 *.swo
 *~
-
+*.o
 # Environment variables
 .env
 .env.local
@@ -64,3 +64,5 @@ dmypy.json
 
 # SVD Pickle cache
 .svd_cache/
+
+Examples/EXAM0_Integrated_Example/Objects/

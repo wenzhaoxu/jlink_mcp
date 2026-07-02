@@ -164,9 +164,12 @@ def rtt_read(
             timeout_ms = _rtt_config.get("timeout_ms", 1000)
 
         # 读取 RTT 数据
-        data = jlink.rtt_read(buffer_index, size, timeout_ms)
+        data = jlink.rtt_read(buffer_index, size)
 
         if data:
+            # 兼容 JLink SDK 返回 list 或 bytes
+            if isinstance(data, list):
+                data = bytes(data)
             # 尝试解码为字符串
             try:
                 text_data = data.decode('utf-8', errors='ignore')
@@ -265,6 +268,13 @@ def rtt_write(data: str, buffer_index: int = 0) -> Dict[str, Any]:
                 "suggestion": "请检查 RTT 是否已启动"
             }
         }
+
+
+def rtt_reset_state() -> None:
+    """重置 RTT 状态（由 disconnect_device 调用）."""
+    global _rtt_started
+    _rtt_started = False
+    logger.info("RTT 状态已重置（设备断开）")
 
 
 def rtt_get_status() -> Dict[str, Any]:

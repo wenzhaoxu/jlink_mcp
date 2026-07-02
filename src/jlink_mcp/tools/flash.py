@@ -48,7 +48,7 @@ def erase_flash(
             logger.info(f"擦除 Flash {start_address:#x} - {end_address:#x} ({human_readable_size(size)})")
 
             # 分扇区擦除
-            jlink.erase_range(start_address, size)
+            jlink.exec_command(f"EraseSector {start_address:#x} {(end_address - 1):#x}")
             erase_type = "sector"
             bytes_erased = size
         else:
@@ -108,15 +108,15 @@ def program_flash(address: int, data: bytes, verify: bool = True) -> Dict[str, A
         jlink = jlink_manager.get_jlink()
 
         logger.info(f"烧录 Flash {address:#x} 大小 {human_readable_size(len(data))}")
-        jlink.flash_download(data, address)
+        jlink.flash(data, address)
 
         verify_result = None
         if verify:
             # 校验
             logger.info("校验 Flash")
-            read_back = jlink.memory_read(address, len(data))
+            read_back = jlink.memory_read(address, len(data), nbits=8)
 
-            if read_back == data:
+            if read_back == list(data):
                 verify_result = {"matched": True, "mismatches": []}
                 logger.info("Flash 校验成功")
             else:
@@ -158,6 +158,49 @@ def program_flash(address: int, data: bytes, verify: bool = True) -> Dict[str, A
         }
 
 
+def program_file(path: str, address: int) -> Dict[str, Any]:
+    """Program a firmware file from local filesystem to Flash / 将本地固件文件烧录到 Flash.
+
+    Reads a binary file from the local filesystem and programs it to Flash.
+
+    Args:
+        path: Path to the binary file on the local filesystem / 本地文件系统路径
+        address: Start address in Flash / Flash 中的起始地址
+
+    Returns:
+        Programming result, same format as program_flash / 烧录结果，与 program_flash 格式相同
+    """
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        if not data:
+            raise JLinkMCPError(JLinkErrorCode.INVALID_PARAMETER, f"文件为空: {path}")
+        logger.info(f"读取文件 {path} 成功，大小 {len(data)} 字节")
+        return program_flash(address, list(data), verify=True)
+    except FileNotFoundError:
+        logger.error(f"文件未找到: {path}")
+        return {
+            "success": False,
+            "bytes_programmed": 0,
+            "error": {
+                "code": JLinkErrorCode.INVALID_PARAMETER.value[0],
+                "description": f"文件未找到: {path}",
+                "suggestion": "请检查文件路径是否正确"
+            }
+        }
+    except Exception as e:
+        logger.error(f"烧录文件失败: {e}")
+        return {
+            "success": False,
+            "bytes_programmed": 0,
+            "error": {
+                "code": JLinkErrorCode.FLASH_PROGRAM_FAILED.value[0],
+                "description": str(e),
+                "suggestion": "请检查文件路径和 Flash 地址是否正确"
+            }
+        }
+
+
 def verify_flash(address: int, data: bytes) -> Dict[str, Any]:
     """校验 Flash 内容.
 
@@ -177,9 +220,9 @@ def verify_flash(address: int, data: bytes) -> Dict[str, Any]:
             raise JLinkMCPError(JLinkErrorCode.INVALID_PARAMETER, "数据不能为空")
 
         jlink = jlink_manager.get_jlink()
-        read_back = jlink.memory_read(address, len(data))
+        read_back = jlink.memory_read(address, len(data), nbits=8)
 
-        if read_back == data:
+        if read_back == list(data):
             logger.info(f"Flash 校验成功（{len(data)} 字节）")
             return {
                 "success": True,
@@ -223,5 +266,50 @@ def verify_flash(address: int, data: bytes) -> Dict[str, Any]:
                 "code": JLinkErrorCode.VERIFY_FAILED.value[0],
                 "description": str(e),
                 "suggestion": "请检查地址是否有效"
+            }
+        }
+
+
+def verify_file(path: str, address: int) -> Dict[str, Any]:
+    """Verify Flash content against a local file / 校验 Flash 内容与本地文件是否一致.
+
+    Reads a binary file from the local filesystem and compares it with Flash contents.
+
+    Args:
+        path: Path to the binary file on the local filesystem / 本地文件系统路径
+        address: Start address in Flash to verify / 要校验的 Flash 起始地址
+
+    Returns:
+        Verification result, same format as verify_flash / 校验结果，与 verify_flash 格式相同
+    """
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        if not data:
+            raise JLinkMCPError(JLinkErrorCode.INVALID_PARAMETER, f"文件为空: {path}")
+        logger.info(f"读取文件 {path} 成功，大小 {len(data)} 字节")
+        return verify_flash(address, list(data))
+    except FileNotFoundError:
+        logger.error(f"文件未找到: {path}")
+        return {
+            "success": False,
+            "matched": False,
+            "mismatches": [],
+            "error": {
+                "code": JLinkErrorCode.INVALID_PARAMETER.value[0],
+                "description": f"文件未找到: {path}",
+                "suggestion": "请检查文件路径是否正确"
+            }
+        }
+    except Exception as e:
+        logger.error(f"校验文件失败: {e}")
+        return {
+            "success": False,
+            "matched": False,
+            "mismatches": [],
+            "error": {
+                "code": JLinkErrorCode.VERIFY_FAILED.value[0],
+                "description": str(e),
+                "suggestion": "请检查文件路径和 Flash 地址是否正确"
             }
         }
