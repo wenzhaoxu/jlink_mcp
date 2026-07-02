@@ -38,11 +38,18 @@ def rtt_start(
 
     try:
         if _rtt_started:
-            raise RTTError(
-                JLinkErrorCode.RTT_ALREADY_STARTED,
-                "RTT 已在运行",
-                "如需重新启动，请先调用 rtt_stop"
-            )
+            # Already started - update config and return success instead of error
+            _rtt_config = {
+                "buffer_index": buffer_index,
+                "read_mode": read_mode,
+                "timeout_ms": timeout_ms
+            }
+            logger.info(f"RTT 已在运行（缓冲区 {buffer_index}），复用现有连接")
+            return {
+                "success": True,
+                "buffer_index": buffer_index,
+                "message": f"RTT 已在运行（缓冲区 {buffer_index}）"
+            }
 
         jlink = jlink_manager.get_jlink()
 
@@ -209,6 +216,115 @@ def rtt_read(
                 "code": JLinkErrorCode.RTT_NOT_STARTED.value[0],
                 "description": str(e),
                 "suggestion": "请检查 RTT 是否已启动，缓冲区索引是否正确"
+            }
+        }
+
+
+def rtt_read_raw(cb_address: int, buffer_index: int = 0) -> Dict[str, Any]:
+    """直接读取 RTT 控制块并提取文本数据（无需先调用 rtt_start）。
+
+    通过读取目标内存中的 SEGGER RTT 控制块，解析 up-buffer 结构，
+    直接获取 RTT 终端输出。适用于 pylink RTT API 不可用时的备选方案。
+
+    控制块结构（SEGGER RTT）:
+        Offset 0x00: acID[16] = "SEGGER RTT"
+        Offset 0x10: MaxNumUpBuffers (4B)
+        Offset 0x14: MaxNumDownBuffers (4B)
+        Offset 0x18: aUp[0].sName (4B ptr)
+        Offset 0x1C: aUp[0].pBuffer (4B ptr) ← 数据缓冲区地址
+        Offset 0x20: aUp[0].SizeOfBuffer (4B)
+        Offset 0x24: aUp[0].WrOff (4B)       ← 写入偏移
+        Offset 0x28: aUp[0].RdOff (4B)       ← 读取偏移
+        Offset 0x30: aUp[1]... (每个 24 字节)
+
+    Args:
+        cb_address: RTT 控制块地址（从 map 文件获取 _SEGGER_RTT 符号）
+        buffer_index: up-buffer 索引（默认 0 = 终端输出）
+
+    Returns:
+        包含以下字段的字典:
+        - success: 是否成功
+        - data: 解码后的文本数据
+        - bytes_read: 读取的字节数
+        - buffer_addr: 数据缓冲区地址
+        - wr_off: 写入偏移
+        - message: 状态信息
+    """
+    try:
+        jlink = jlink_manager.get_jlink()
+
+        # Read CB header (16 bytes acID + 8 bytes config)
+        cb_data = jlink.memory_read(cb_address, 48, nbits=8)
+
+        # Verify magic "SEGGER RTT"
+        magic = bytes(cb_data[:16]).decode('ascii', errors='ignore')
+        if not magic.startswith("SEGGER RTT"):
+            return {
+                "success": False,
+                "data": "",
+                "bytes_read": 0,
+                "error": {
+                    "code": -1,
+                    "description": f"RTT 控制块无效 (magic={magic[:20]})",
+                    "suggestion": "请确认 cb_address 是否正确，固件是否已初始化 RTT"
+                }
+            }
+
+        # Parse up-buffer descriptor (offset 24 + buf_index * 24)
+        desc_offset = 24 + buffer_index * 24
+        if desc_offset + 24 > len(cb_data):
+            # Need to read more
+            more = jlink.memory_read(cb_address + desc_offset, 24, nbits=8)
+        else:
+            more = cb_data[desc_offset:desc_offset + 24]
+
+        # pBuffer at descriptor offset 4
+        pbuf = more[4] | (more[5] << 8) | (more[6] << 16) | (more[7] << 24)
+        size = more[8] | (more[9] << 8) | (more[10] << 16) | (more[11] << 24)
+        wr_off = more[12] | (more[13] << 8) | (more[14] << 16) | (more[15] << 24)
+
+        if pbuf == 0 or size == 0:
+            return {
+                "success": False,
+                "data": "",
+                "bytes_read": 0,
+                "error": {
+                    "code": -1,
+                    "description": f"RTT up-buffer {buffer_index} 未配置 (pbuf=0x{pbuf:08X}, size={size})",
+                    "suggestion": "固件中需要调用 SEGGER_RTT_ConfigUpBuffer 或使用 RTT_LOG 宏"
+                }
+            }
+
+        # Read buffer data
+        if wr_off > size:
+            wr_off = size
+        if wr_off > 0:
+            buf_data = jlink.memory_read(pbuf, wr_off, nbits=8)
+            text = bytes(buf_data).decode('utf-8', errors='ignore')
+        else:
+            text = ""
+
+        logger.info(f"RTT raw read: pbuf=0x{pbuf:08X}, wr={wr_off}, size={size}")
+        return {
+            "success": True,
+            "data": text,
+            "bytes_read": wr_off,
+            "buffer_addr": pbuf,
+            "wr_off": wr_off,
+            "size": size,
+            "message": f"成功读取 {wr_off} 字节 (缓冲区 {buffer_index})"
+        }
+
+    except Exception as e:
+        logger.error(f"RTT raw read 失败: {e}")
+        return {
+            "success": False,
+            "data": "",
+            "bytes_read": 0,
+            "error": {
+                "code": -1,
+                "description": str(e),
+                "suggestion": "请检查 cb_address 和 buffer_index 是否正确"
             }
         }
 

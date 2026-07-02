@@ -57,6 +57,7 @@ from .tools.rtt import (
     rtt_start as _rtt_start,
     rtt_stop as _rtt_stop,
     rtt_read as _rtt_read,
+    rtt_read_raw as _rtt_read_raw,
     rtt_write as _rtt_write,
     rtt_get_status as _rtt_get_status,
 )
@@ -499,6 +500,33 @@ async def rtt_get_status() -> dict:
         RTT status information / RTT 状态信息
     """
     return _rtt_get_status()
+
+
+@mcp.tool()
+async def rtt_read_raw(cb_address: int, buffer_index: int = 0) -> dict:
+    """Read RTT data directly from control block in memory / 从内存中的RTT控制块直接读取数据.
+
+    Reads the SEGGER RTT control block from the specified address, parses the up-buffer
+    structure, and extracts text data. This bypasses the pylink RTT API and works even
+    when rtt_start fails.
+    从指定地址读取SEGGER RTT控制块，解析up-buffer结构并提取文本数据。
+    绕过pylink RTT API，在rtt_start失败时仍可工作。
+
+    Control block structure / 控制块结构:
+        +0x00: acID[16] = "SEGGER RTT"
+        +0x10: MaxNumUpBuffers
+        +0x18: aUp[0] descriptor (24 bytes each)
+        +0x1C: aUp[0].pBuffer (data buffer address / 数据缓冲区地址)
+        +0x24: aUp[0].WrOff  (bytes written / 已写入字节数)
+
+    Args:
+        cb_address: RTT control block address from map file / map文件中的_SEGGER_RTT地址
+        buffer_index: Up-buffer index (0=terminal, 1/2=other) / 缓冲区索引(0=终端)
+
+    Returns:
+        Dictionary with data, bytes_read, buffer_addr, wr_off / 包含数据和诊断信息的字典
+    """
+    return _rtt_read_raw(cb_address, buffer_index)
 
 
 # ========================================
