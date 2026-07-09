@@ -437,7 +437,7 @@ device_patch_manager.register_patch(custom_patch)
 
 ### 📚 API Reference
 
-The server provides **41 MCP tools** across 9 categories:
+The server provides **44 MCP tools** across 9 categories:
 
 #### Connection API (5 tools)
 
@@ -467,15 +467,16 @@ The server provides **41 MCP tools** across 9 categories:
 | `read_registers` | `register_names?` | Read CPU registers |
 | `write_register` | `register_name`, `value` | Write single register |
 
-#### Flash API (3 tools)
+#### Flash API (4 tools)
 
 | Function | Parameters | Description |
 |----------|------------|-------------|
 | `erase_flash` | `start_address?`, `end_address?`, `chip_erase?` | Erase flash |
 | `program_flash` | `address`, `data`, `verify?` | Program flash |
 | `verify_flash` | `address`, `data` | Verify flash |
+| `program_file` | `path`, `address?` | Program file with Intel HEX/.bin auto-detection |
 
-#### Debug API (7 tools)
+#### Debug API (8 tools)
 
 | Function | Parameters | Description |
 |----------|------------|-------------|
@@ -486,14 +487,17 @@ The server provides **41 MCP tools** across 9 categories:
 | `get_cpu_state` | - | Get CPU state |
 | `set_breakpoint` | `address` | Set breakpoint |
 | `clear_breakpoint` | `address` | Clear breakpoint |
+| `clear_all_breakpoints` | - | Clear all breakpoints |
+| `clear_all_breakpoints` | - | Clear all breakpoints |
 
-#### RTT API (5 tools)
+#### RTT API (6 tools)
 
 | Function | Parameters | Description |
 |----------|------------|-------------|
 | `rtt_start` | `buffer_index?`, `read_mode?`, `timeout_ms?` | Start RTT |
 | `rtt_stop` | - | Stop RTT |
 | `rtt_read` | `buffer_index?`, `size?`, `timeout_ms?` | Read RTT data |
+| `rtt_read_raw` | `cb_address`, `buffer_index?` | Read raw RTT data via callback address |
 | `rtt_write` | `data`, `buffer_index?` | Write RTT data |
 | `rtt_get_status` | - | Get RTT status |
 
@@ -1009,56 +1013,139 @@ device_patch_manager.register_patch(custom_patch)
 
 ### 📚 API参考
 
-#### 核心函数
+服务器提供了 44 个 MCP 工具，覆盖以下 9 个类别：连接、设备信息、内存、Flash、调试、RTT、GDB、SVD、使用指导。
+
+#### 连接 API
 
 <details>
-<summary>📂 展开：连接API</summary>
+<summary>📂 展开：连接 API</summary>
 
 | 函数 | 参数 | 描述 |
 |------|------|------|
-| `connect_device` | `chip_name`, `interface`, `serial_number` | 连接到J-Link设备 |
+| `list_jlink_devices` | - | 列出连接的 J-Link 设备 |
+| `connect_device` | `serial_number?`, `interface?`, `chip_name?` | 连接到 J-Link 设备 |
 | `disconnect_device` | - | 断开当前设备连接 |
 | `get_connection_status` | - | 获取连接状态 |
-| `list_jlink_devices` | - | 列出连接的J-Link设备 |
-| `scan_target_devices` | - | 扫描总线上的设备 |
-| `get_target_info` | - | 获取目标设备信息 |
-| `get_target_voltage` | - | 获取目标电压 |
+| `match_chip_name` | `chip_name` | 智能芯片名称匹配 |
 
 </details>
 
+#### 设备信息 API
+
 <details>
-<summary>📂 展开：内存API</summary>
+<summary>📂 展开：设备信息 API</summary>
 
 | 函数 | 参数 | 描述 |
 |------|------|------|
-| `read_memory` | `address`, `size`, `width` | 读取内存 |
-| `write_memory` | `address`, `data`, `width` | 写入内存 |
+| `get_target_info` | - | 获取目标设备信息 |
+| `get_target_voltage` | - | 获取目标电压 |
+| `scan_target_devices` | - | 扫描总线上的设备 |
+| `list_device_patches` | - | 列出已加载的设备补丁 |
 
 </details>
+
+#### 内存 API
+
+<details>
+<summary>📂 展开：内存 API</summary>
+
+| 函数 | 参数 | 描述 |
+|------|------|------|
+| `read_memory` | `address`, `size`, `width?` | 读取内存 |
+| `write_memory` | `address`, `data`, `width?` | 写入内存 |
+| `read_registers` | `register_names?` | 读取 CPU 寄存器 |
+| `write_register` | `register_name`, `value` | 写入单个寄存器 |
+
+</details>
+
+#### Flash API
 
 <details>
 <summary>📂 展开：Flash API</summary>
 
 | 函数 | 参数 | 描述 |
 |------|------|------|
-| `erase_flash` | `start_address`, `end_address`, `chip_erase` | 擦除Flash |
-| `program_flash` | `address`, `data`, `verify` | 烧录Flash |
-| `verify_flash` | `address`, `data` | 验证Flash |
+| `erase_flash` | `start_address?`, `end_address?`, `chip_erase?` | 擦除 Flash |
+| `program_flash` | `address`, `data`, `verify?` | 烧录 Flash |
+| `verify_flash` | `address`, `data` | 验证 Flash |
+| `program_file` | `path`, `address?` | 使用 Intel HEX/.bin 自动识别烧录文件 |
 
 </details>
 
+#### 调试 API
+
 <details>
-<summary>📂 展开：调试API</summary>
+<summary>📂 展开：调试 API</summary>
 
 | 函数 | 参数 | 描述 |
 |------|------|------|
-| `reset_target` | `reset_type` | 复位目标 |
-| `halt_cpu` | - | 暂停CPU |
-| `run_cpu` | - | 在不复位目标的情况下恢复 CPU 运行 |
+| `reset_target` | `reset_type?` | 复位目标 |
+| `halt_cpu` | - | 暂停 CPU |
+| `run_cpu` | - | 恢复 CPU 运行 |
 | `step_instruction` | - | 单步执行 |
-| `get_cpu_state` | - | 获取CPU状态 |
+| `get_cpu_state` | - | 获取 CPU 状态 |
 | `set_breakpoint` | `address` | 设置断点 |
 | `clear_breakpoint` | `address` | 清除断点 |
+| `clear_all_breakpoints` | - | 清除所有断点 |
+
+</details>
+
+#### RTT API
+
+<details>
+<summary>📂 展开：RTT API</summary>
+
+| 函数 | 参数 | 描述 |
+|------|------|------|
+| `rtt_start` | `buffer_index?`, `read_mode?`, `timeout_ms?` | 启动 RTT |
+| `rtt_stop` | - | 停止 RTT |
+| `rtt_read` | `buffer_index?`, `size?`, `timeout_ms?` | 读取 RTT 数据 |
+| `rtt_read_raw` | `cb_address`, `buffer_index?` | 通过回调地址读取原始 RTT 数据 |
+| `rtt_write` | `data`, `buffer_index?` | 向 RTT 写入数据 |
+| `rtt_get_status` | - | 获取 RTT 状态 |
+
+</details>
+
+#### GDB 服务器 API
+
+<details>
+<summary>📂 展开：GDB 服务器 API</summary>
+
+| 函数 | 参数 | 描述 |
+|------|------|------|
+| `start_gdb_server` | `host?`, `port?`, `device?`, `interface?`, `speed?` | 启动 GDB 服务器 |
+| `stop_gdb_server` | - | 停止 GDB 服务器 |
+| `get_gdb_server_status` | - | 获取 GDB 服务器状态 |
+
+</details>
+
+#### SVD API
+
+<details>
+<summary>📂 展开：SVD API</summary>
+
+| 函数 | 参数 | 描述 |
+|------|------|------|
+| `list_svd_devices` | - | 列出可用的 SVD 设备 |
+| `get_svd_peripherals` | `device_name` | 获取设备外设 |
+| `get_svd_registers` | `device_name`, `peripheral_name` | 获取外设寄存器 |
+| `read_register_with_fields` | `device_name`, `peripheral_name`, `register_name` | 读取寄存器并解析字段 |
+| `parse_register_value` | `device_name`, `peripheral_name`, `register_name`, `value` | 解析寄存器值 |
+
+</details>
+
+#### 使用指导 API
+
+<details>
+<summary>📂 展开：使用指导 API</summary>
+
+| 函数 | 参数 | 描述 |
+|------|------|------|
+| `get_usage_guidance` | `category?`, `include_examples?` | 获取工具使用指南 |
+| `get_best_practices` | `task_type` | 获取最佳实践 |
+| `list_scenarios` | - | 列出使用场景 |
+| `get_forbidden_operations` | - | 列出禁止操作 |
+| `get_system_prompt` | `prompt_name?` | 获取系统/自定义提示 |
 
 </details>
 
